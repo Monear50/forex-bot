@@ -1,51 +1,65 @@
-import requests
+import MetaTrader5 as mt5
 import time
-import statistics
 
-# Price API
-pairs = {
-    "BTCUSDC": "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDC",
-    "XAUUSD": "https://api.binance.com/api/v3/ticker/price?symbol=XAUUSDT"
-}
+# Connect to MT5
+mt5.initialize()
 
-price_history = {
-    "BTCUSDC": [],
-    "XAUUSD": []
-}
+# Trading pairs
+pairs = ["XAUUSD", "BTCUSDC"]
 
-def get_price(url):
-    data = requests.get(url).json()
-    return float(data["price"])
+# Settings
+lot = 0.01
+grid_distance = 300   # points
+take_profit = 200
+magic = 123456
+
+
+def open_trade(symbol, order_type):
+    
+    price = mt5.symbol_info_tick(symbol).ask if order_type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).bid
+    
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": lot,
+        "type": order_type,
+        "price": price,
+        "tp": price + take_profit * mt5.symbol_info(symbol).point if order_type == mt5.ORDER_TYPE_BUY else price - take_profit * mt5.symbol_info(symbol).point,
+        "deviation": 20,
+        "magic": magic,
+        "comment": "LowRiskBot",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    mt5.order_send(request)
+
+
+def check_positions(symbol):
+    positions = mt5.positions_get(symbol=symbol)
+    return positions
+
 
 while True:
+    
+    for pair in pairs:
 
-    for pair, url in pairs.items():
+        positions = check_positions(pair)
 
-        price = get_price(url)
+        if positions is None or len(positions) == 0:
+            open_trade(pair, mt5.ORDER_TYPE_BUY)
 
-        history = price_history[pair]
-        history.append(price)
+        else:
+            last_price = mt5.symbol_info_tick(pair).bid
 
-        if len(history) > 20:
-            history.pop(0)
+            for pos in positions:
 
-        if len(history) >= 10:
+                if pos.type == 0:
+                    if last_price < pos.price_open - grid_distance * mt5.symbol_info(pair).point:
+                        open_trade(pair, mt5.ORDER_TYPE_BUY)
 
-            ma_short = statistics.mean(history[-5:])
-            ma_long = statistics.mean(history)
+                if pos.type == 1:
+                    if last_price > pos.price_open + grid_distance * mt5.symbol_info(pair).point:
+                        open_trade(pair, mt5.ORDER_TYPE_SELL)
 
-            print(f"\nPair: {pair}")
-            print("Current Price:", price)
-            print("MA Short:", ma_short)
-            print("MA Long:", ma_long)
-
-            if ma_short > ma_long:
-                print("Signal: BUY")
-
-            elif ma_short < ma_long:
-                print("Signal: SELL")
-
-            else:
-                print("Signal: WAIT")
-
-    time.sleep(15)
+    time.sleep(10)
